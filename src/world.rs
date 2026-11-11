@@ -1,7 +1,7 @@
 use glow::HasContext;
 
 use crate::{
-    math,
+    math::{self, m4x4_mtranslate},
     utils::{self, check_gl_error},
 };
 
@@ -22,30 +22,108 @@ struct Icosahedron {
 pub struct World {
     my_shaders: Shaders,
     icosahedron: Icosahedron,
+    left: f32,
+    right: f32,
+    bottom: f32,
+    top: f32,
+    near: f32,
+    far: f32,
+    win_width: i32,
+    win_height: i32,
+    viewer_pos: math::V4,
+    viewer_rvec: math::V3,
+    viewer_rangle: f32,
 }
 
 impl World {
+    pub fn rotate_viewer(
+        &mut self,
+        gl: &glow::Context,
+        delta_xi: f64,
+        delta_eta: f64,
+    ) -> Result<(), String> {
+        if delta_xi == 0. && delta_eta == 0. {
+            return Ok(());
+        }
+
+        let mut v = [
+            delta_eta as f32 * (self.right - self.left) / self.win_height as f32,
+            delta_xi as f32 * (self.top - self.bottom) / self.win_width as f32,
+            0.,
+        ];
+        let lgt = math::v3_dot_product(&v, &v).sqrt();
+        v[0] /= lgt;
+        v[1] /= lgt;
+
+        let angi = (-3.0f32).to_radians();
+        let (vk, angk) = math::v3_comp_rotations(&self.viewer_rvec, self.viewer_rangle, &v, angi);
+        self.viewer_rvec = vk;
+        self.viewer_rangle = angk;
+        let mut vm = math::m4x4_translate(
+            -self.viewer_pos[0],
+            -self.viewer_pos[1],
+            -self.viewer_pos[2],
+        );
+        math::m4x4_mrotate_v(
+            &mut vm,
+            self.viewer_rvec[0],
+            self.viewer_rvec[1],
+            self.viewer_rvec[2],
+            -self.viewer_rangle,
+        );
+
+        unsafe {
+            gl.bind_buffer(glow::UNIFORM_BUFFER, Some(self.my_shaders.trbuf));
+            gl.buffer_sub_data_u8_slice(
+                glow::UNIFORM_BUFFER,
+                self.my_shaders.trbofs[1],
+                bytemuck::cast_slice(&vm),
+            );
+            check_gl_error(gl)
+        }
+    }
+
     pub fn new(gl: &glow::Context, width: i32, height: i32) -> Result<Self, String> {
+        let initial_view_pos = [0., 0., 10., 1.];
         let my_shaders = load_shaders(gl)?;
         init_model_matrix(gl, &my_shaders)?;
-        init_view_matrix(gl, &my_shaders)?;
+        init_view_matrix(gl, &my_shaders, &initial_view_pos)?;
         let icosahedron = construct_icosahedron_vao(gl)?;
-        let world = Self {
+        let mut world = Self {
             my_shaders,
             icosahedron,
+            left: 0.,
+            right: 0.,
+            bottom: 0.,
+            top: 0.,
+            near: 0.,
+            far: 0.,
+            win_width: 0,
+            win_height: 0,
+            viewer_pos: initial_view_pos,
+            viewer_rvec: [0., 0., 0.],
+            viewer_rangle: 0.,
         };
         world.resize(gl, width, height)?;
 
         Ok(world)
     }
 
-    pub fn resize(&self, gl: &glow::Context, width: i32, height: i32) -> Result<(), String> {
-        unsafe {
-            gl.viewport(0, 0, width, height);
-        }
+    pub fn resize(&mut self, gl: &glow::Context, width: i32, height: i32) -> Result<(), String> {
         let lr = 0.5533 * (width as f32) / (height as f32);
         let (m, _) = math::m4x4_frustum(-lr, lr, -0.5533, 0.5533, 5., 15.);
+
+        self.win_width = width;
+        self.win_height = height;
+        self.left = -lr;
+        self.right = lr;
+        self.bottom = -0.5533;
+        self.top = 0.5533;
+        self.near = 5.;
+        self.far = 15.;
+
         unsafe {
+            gl.viewport(0, 0, width, height);
             gl.bind_buffer(glow::UNIFORM_BUFFER, Some(self.my_shaders.trbuf));
             gl.buffer_sub_data_u8_slice(
                 glow::UNIFORM_BUFFER,
@@ -156,7 +234,7 @@ fn load_shaders(gl: &glow::Context) -> Result<Shaders, String> {
         gl.bind_buffer_base(glow::UNIFORM_BUFFER, 0, Some(trbuf));
         gl.buffer_data_size(glow::UNIFORM_BUFFER, trbsize, glow::DYNAMIC_DRAW);
 
-        utils::check_gl_error(gl);
+        utils::check_gl_error(gl)?;
 
         Ok(Shaders {
             shaders,
@@ -182,8 +260,12 @@ fn init_model_matrix(gl: &glow::Context, shaders: &Shaders) -> Result<(), String
     utils::check_gl_error(gl)
 }
 
-fn init_view_matrix(gl: &glow::Context, shaders: &Shaders) -> Result<(), String> {
-    let m = math::m4x4_translate(0., 0., -10.);
+fn init_view_matrix(
+    gl: &glow::Context,
+    shaders: &Shaders,
+    viewer_pos: &math::V4,
+) -> Result<(), String> {
+    let m = math::m4x4_translate(-viewer_pos[0], -viewer_pos[1], -viewer_pos[2]);
     unsafe {
         gl.bind_buffer(glow::UNIFORM_BUFFER, Some(shaders.trbuf));
         gl.buffer_sub_data_u8_slice(

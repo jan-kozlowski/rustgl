@@ -1,4 +1,4 @@
-use glow::{HasContext, NativeShader};
+use glow::HasContext;
 
 pub fn print_gl_version(gl: &glow::Context) {
     unsafe {
@@ -47,7 +47,7 @@ pub fn compile_shader_strings(
         }
         if !gl.get_shader_compile_status(shader) {
             gl.delete_shader(shader);
-            return Err(format!("Kompilacja shadera nie powiodła się:\n{log}"));
+            return Err(format!("Shader compilation failed: {log}"));
         }
         check_gl_error(gl)?;
         Ok(shader)
@@ -61,7 +61,7 @@ pub fn compile_shader_files(
 ) -> Result<glow::Shader, String> {
     let sources = files
         .iter()
-        .map(|&f| std::fs::read_to_string(f).map_err(|e| format!("Nie można wczytać `{f}`: {e}")))
+        .map(|&f| std::fs::read_to_string(f).map_err(|e| format!("Could not read `{f}`: {e}")))
         .collect::<Result<Vec<String>, String>>()?;
     let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
     compile_shader_strings(gl, shader_type, &sources)
@@ -84,7 +84,7 @@ pub fn link_shader_program(
         }
         if !gl.get_program_link_status(program) {
             gl.delete_program(program);
-            return Err(format!("Konsolidacja programu nie powiodła się:\n{log}"));
+            return Err(format!("Linking failed: {log}"));
         }
         check_gl_error(gl)?;
         Ok(program)

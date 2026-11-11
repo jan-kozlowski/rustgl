@@ -1,13 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
-use glfw::{
-    Action, Context, Glfw, Key, Modifiers, MouseButton, PWindow, Scancode, Window, WindowHint,
-};
+use glfw::{Action, Context, Glfw, Key, Modifiers, MouseButton, PWindow, Scancode, Window};
 
-use crate::{
-    utils,
-    world::{self, World},
-};
+use crate::{utils, world::World};
 
 const WIDTH: u32 = 480;
 const HEIGHT: u32 = 360;
@@ -16,7 +11,10 @@ struct State {
     gl: glow::Context,
     world: World,
     redraw: bool,
+    rotating: bool,
     error: Option<String>,
+    last_x: f64,
+    last_y: f64,
 }
 
 type SharedState = Rc<RefCell<State>>;
@@ -34,6 +32,7 @@ impl App {
         glfw.window_hint(glfw::WindowHint::OpenGlProfile(
             glfw::OpenGlProfileHint::Core,
         ));
+
         let (mut window, events) = glfw
             .create_window(WIDTH, HEIGHT, "GLFW app", glfw::WindowMode::Windowed)
             .ok_or("Could not create a window")?;
@@ -55,7 +54,10 @@ impl App {
             gl,
             world: my_world,
             redraw: true,
+            rotating: false,
             error: None,
+            last_x: 0.,
+            last_y: 0.,
         }));
 
         let s = Rc::clone(&state);
@@ -84,9 +86,13 @@ impl App {
 
         let s = Rc::clone(&state);
         window.set_mouse_button_callback(move |w, mouse_button, action, modifiers| {
-            mouse_func(w, mouse_button, action, modifiers);
+            mouse_func(&s, w, mouse_button, action, modifiers);
         });
-        window.set_cursor_pos_callback(motion_func);
+
+        let s = Rc::clone(&state);
+        window.set_cursor_pos_callback(move |w, x, y| {
+            motion_func(&s, w, x, y);
+        });
 
         Ok(Self {
             glfw,
@@ -139,9 +145,10 @@ fn report(st: &mut State, window: &mut Window, result: Result<(), String>) {
 }
 
 fn reshape_func(state: &SharedState, window: &mut Window, width: i32, height: i32) {
-    let mut state = state.borrow_mut();
+    let mut state_ref = state.borrow_mut();
+    let state = &mut *state_ref;
     let result = state.world.resize(&state.gl, width, height);
-    report(&mut state, window, result);
+    report(state, window, result);
     state.redraw = true;
 }
 
@@ -161,14 +168,52 @@ fn keyboard_func(
 fn char_func(window: &mut Window, c: char) {}
 
 fn mouse_func(
+    state: &SharedState,
     window: &mut Window,
     mouse_button: MouseButton,
     action: Action,
     modifiers: Modifiers,
 ) {
+    if mouse_button != MouseButton::Button1 {
+        return;
+    }
+
+    let mut state_ref = state.borrow_mut();
+    let state = &mut *state_ref;
+
+    match action {
+        Action::Release => {
+            state.rotating = false;
+        }
+        Action::Press => {
+            let (x, y) = window.get_cursor_pos();
+            state.rotating = true;
+            state.last_x = x;
+            state.last_y = y;
+        }
+        Action::Repeat => {}
+    }
 }
 
-fn motion_func(window: &mut Window, x: f64, y: f64) {}
+fn motion_func(state: &SharedState, window: &mut Window, x: f64, y: f64) {
+    let mut state_ref = state.borrow_mut();
+    let state = &mut *state_ref;
+
+    if !state.rotating {
+        return;
+    }
+
+    let delta_x = x - state.last_x;
+    let delta_y = y - state.last_y;
+    if delta_x != 0. || delta_y != 0. {
+        let result = state.world.rotate_viewer(&state.gl, delta_x, delta_y);
+        report(state, window, result);
+
+        state.last_x = x;
+        state.last_y = y;
+        state.redraw = true;
+    }
+}
 
 fn display_func(state: &SharedState, window: &mut Window) {
     state.borrow_mut().redraw = true;
